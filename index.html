@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PA1 — Kiss Surface — Хоменко Олег, ТР-62мп</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="Utils/trackball-rotator.js"></script>
+    <script src="Utils/m4.js"></script>
+    <script src="shader.gpu"></script>
+    <script src="model.js"></script>
+    <script src="main.js"></script>
+</head>
+<body onload="init()">
+    <header>
+        <h1>PA1 · Kiss Surface</h1>
+        <p>Хоменко Олег · ТР-62мп · Варіант 19</p>
+    </header>
+    <section class="controls" aria-label="Керування поверхнею">
+        <label>Розбиття U <input id="u-segments" type="range" min="8" max="96" step="4" value="48"><output id="u-value" for="u-segments">48</output></label>
+        <label>Розбиття V <input id="v-segments" type="range" min="8" max="96" step="4" value="48"><output id="v-value" for="v-segments">48</output></label>
+        <label class="u-color"><input type="checkbox" id="show-u" checked> U-криві (кола)</label>
+        <label class="v-color"><input type="checkbox" id="show-v" checked> V-криві (меридіани)</label>
+        <button id="reset-view" type="button">Початковий вигляд</button>
+        <button id="front-view" type="button">Вигляд збоку</button>
+        <button id="save-image" type="button">Зберегти PNG</button>
+    </section>
+    <main id="canvas-holder">
+        <canvas id="webglcanvas" width="1100" height="700" aria-label="Каркас поверхні Kiss Surface. Перетягніть мишею для обертання."></canvas>
+        <p id="error" role="alert" hidden></p>
+        <div class="canvas-caption" aria-hidden="true">
+            <span class="u-color">U — змінюється кут u</span>
+            <span class="v-color">V — змінюється висота v</span>
+        </div>
+    </main>
+    <footer>
+        <p>Перетягніть поверхню мишею для обертання. Повзунки змінюють кількість інтервалів сітки.</p>
+        <p class="formula">x = v²√(1 − v) cos u; y = v²√(1 − v) sin u; z = v &nbsp; | &nbsp; u ∈ [0, 2π], v ∈ [−1, 1]</p>
+        <p id="mesh-info" aria-live="polite"></p>
+    </footer>
+</body>
+</html>

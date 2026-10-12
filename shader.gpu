@@ -1,24 +1,58 @@
-
-
-// Vertex shader
+// Phong shading: interpolate position and normal, then illuminate each fragment.
 const vertexShaderSource = `
 attribute vec3 vertex;
-uniform mat4 ModelViewProjectionMatrix;
-
+attribute vec3 normal;
+uniform mat4 ModelViewMatrix;
+uniform mat4 ProjectionMatrix;
+uniform mat3 NormalMatrix;
+varying vec3 positionEye;
+varying vec3 normalEye;
 void main() {
-    gl_Position = ModelViewProjectionMatrix * vec4(vertex,1.0);
+    vec4 position = ModelViewMatrix * vec4(vertex, 1.0);
+    positionEye = position.xyz;
+    normalEye = NormalMatrix * normal;
+    gl_Position = ProjectionMatrix * position;
 }`;
 
-
-// Fragment shader
 const fragmentShaderSource = `
 #ifdef GL_FRAGMENT_PRECISION_HIGH
-   precision highp float;
+precision highp float;
 #else
-   precision mediump float;
+precision mediump float;
 #endif
-
-uniform vec4 color;
+uniform vec3 lightPosition;
+uniform vec3 components;
+varying vec3 positionEye;
+varying vec3 normalEye;
 void main() {
-    gl_FragColor = color;
+    vec3 N = normalize(normalEye);
+    // The lower funnel is open; illuminate its visible inner side as well.
+    if (!gl_FrontFacing) N = -N;
+    vec3 L = normalize(lightPosition - positionEye);
+    vec3 V = normalize(-positionEye);
+    vec3 R = reflect(-L, N);
+    float diffuseFactor = max(dot(N, L), 0.0);
+    float specularFactor = 0.0;
+    if (diffuseFactor > 0.0) specularFactor = pow(max(dot(R, V), 0.0), 40.0);
+    vec3 material = vec3(0.22, 0.64, 0.76);
+    vec3 ambient = 0.16 * material;
+    vec3 diffuse = 0.78 * material * diffuseFactor;
+    vec3 specular = vec3(0.85) * specularFactor;
+    vec3 intensity = components.x * ambient + components.y * diffuse + components.z * specular;
+    gl_FragColor = vec4(intensity, 1.0);
+}`;
+
+// A small point marks the position of the single light source.
+const lightVertexSource = `
+attribute vec3 vertex;
+uniform mat4 ModelViewProjectionMatrix;
+void main() {
+    gl_Position = ModelViewProjectionMatrix * vec4(vertex, 1.0);
+    gl_PointSize = 13.0;
+}`;
+const lightFragmentSource = `
+precision mediump float;
+void main() {
+    if (distance(gl_PointCoord, vec2(0.5)) > 0.5) discard;
+    gl_FragColor = vec4(1.0, 0.83, 0.38, 1.0);
 }`;

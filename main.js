@@ -1,24 +1,33 @@
 'use strict';
 
-// Based on the PA1 skeleton by Anatoliy Demchyshyn (ademch/WebGL).
-let gl;
-let surface;
-let shProgram;
-let spaceball;
+// Based on the PA1/PA2 skeleton by Anatoliy Demchyshyn (ademch/WebGL).
+let gl, surface, shProgram, spaceball;
+let lightProgram, lightBuffer;
+let lightAngle = 0.65;
+let lightRunning = true;
+let previousTime = null;
+let frameRequest = 0;
 
 function ShaderProgram(name, program) {
     this.name = name;
     this.prog = program;
-    this.iAttribVertex = gl.getAttribLocation(program, 'vertex');
-    this.iColor = gl.getUniformLocation(program, 'color');
-    this.iModelViewProjectionMatrix = gl.getUniformLocation(program, 'ModelViewProjectionMatrix');
+    this.vertex = gl.getAttribLocation(program, 'vertex');
+    this.normal = gl.getAttribLocation(program, 'normal');
+    for (const uniform of ['ModelViewMatrix', 'ProjectionMatrix', 'NormalMatrix',
+                           'lightPosition', 'components']) {
+        this[uniform] = gl.getUniformLocation(program, uniform);
+    }
     this.Use = function() { gl.useProgram(this.prog); };
+}
+
+function LightPosition(angle) {
+    return [2.0 * Math.cos(angle), 2.0 * Math.sin(angle), 0.45];
 }
 
 function draw() {
     if (!gl || !spaceball || gl.isContextLost()) return;
     const canvas = gl.canvas;
-    // TrackballRotator uses CSS mouse coordinates: keep canvas units the same.
+    // TrackballRotator uses CSS coordinates; keep canvas units consistent.
     const width = Math.max(1, Math.round(canvas.clientWidth));
     const height = Math.max(1, Math.round(canvas.clientHeight));
     if (canvas.width !== width || canvas.height !== height) {
@@ -29,17 +38,46 @@ function draw() {
     gl.clearColor(0.03, 0.04, 0.065, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     const aspect = canvas.width / canvas.height;
-    // The lecture's near/far = 8/12 and distance = 10 enclose radius sqrt(3).
-    // Widen vertical FOV in portrait layouts to keep the surface inside the view.
-    const fov = 2 * Math.atan(Math.tan(Math.PI / 16) / Math.min(1, aspect));
-    const projection = m4.perspective(fov, aspect, 8, 12);
-    const modelView = spaceball.getViewMatrix();
-    const translation = m4.translation(0, 0, -10);
-    const translatedView = m4.multiply(translation, modelView);
-    const modelViewProjection = m4.multiply(projection, translatedView);
-    gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, modelViewProjection);
-    surface.Draw(document.getElementById('show-u').checked,
-                 document.getElementById('show-v').checked);
+    const fov = 2 * Math.atan(Math.tan(Math.PI / 15) / Math.min(1, aspect));
+    const projection = m4.perspective(fov, aspect, 7, 13);
+    const modelView = m4.multiply(m4.translation(0, 0, -10), spaceball.getViewMatrix());
+    const inverseTranspose = m4.transpose(m4.inverse(modelView));
+    const normalMatrix = new Float32Array([
+        inverseTranspose[0], inverseTranspose[1], inverseTranspose[2],
+        inverseTranspose[4], inverseTranspose[5], inverseTranspose[6],
+        inverseTranspose[8], inverseTranspose[9], inverseTranspose[10]
+    ]);
+    const light = LightPosition(lightAngle);
+    // Both surface positions and the light must be in the same eye space.
+    const lightEye = m4.transformPoint(modelView, light);
+    shProgram.Use();
+    gl.uniformMatrix4fv(shProgram.ModelViewMatrix, false, modelView);
+    gl.uniformMatrix4fv(shProgram.ProjectionMatrix, false, projection);
+    gl.uniformMatrix3fv(shProgram.NormalMatrix, false, normalMatrix);
+    gl.uniform3fv(shProgram.lightPosition, lightEye);
+    gl.uniform3fv(shProgram.components, ['ambient', 'diffuse', 'specular'].map(id =>
+        document.getElementById(id).checked ? 1 : 0));
+    surface.Draw();
+
+    gl.disableVertexAttribArray(shProgram.normal);
+    gl.disableVertexAttribArray(shProgram.vertex);
+    gl.useProgram(lightProgram.prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lightBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(light));
+    gl.vertexAttribPointer(lightProgram.vertex, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(lightProgram.vertex);
+    gl.uniformMatrix4fv(lightProgram.matrix, false, m4.multiply(projection, modelView));
+    gl.drawArrays(gl.POINTS, 0, 1);
+    gl.disableVertexAttribArray(lightProgram.vertex);
+}
+
+function animate(time) {
+    if (previousTime !== null && lightRunning) {
+        lightAngle = (lightAngle + 0.65 * Math.min((time - previousTime)/1000, 0.1)) % (2*Math.PI);
+    }
+    previousTime = time;
+    draw();
+    frameRequest = requestAnimationFrame(animate);
 }
 
 function rebuildSurface() {
@@ -49,23 +87,19 @@ function rebuildSurface() {
     document.getElementById('v-value').value = nv;
     const data = CreateSurfaceData(nu, nv);
     surface.BufferData(data);
-    const vertices = (data.uVertices.length + data.vVertices.length) / 3;
     document.getElementById('mesh-info').textContent =
-        'U: ' + data.uLines.length + ' поліліній × ' + (nu + 1) + ' вершин; ' +
-        'V: ' + data.vLines.length + ' поліліній × ' + (nv + 1) + ' вершин. ' +
-        'Разом у двох буферах: ' + vertices + ' вершин.';
+        'Вершин: ' + data.vertices.length/3 + ' · Трикутників: ' + data.indices.length/3 +
+        ' · Розбиття: ' + nu + ' × ' + nv;
     draw();
 }
 
 function initialView() {
-    // The surface's z axis points upwards. Rotation affects the view only.
     spaceball.setView(0, [4, 6, 2.5], [0, 0, 1]);
     draw();
 }
 
 function saveImage() {
     draw();
-    // Export the actual WebGL render, with the name and U/V legend.
     const exportCanvas = document.createElement('canvas');
     exportCanvas.width = gl.canvas.width;
     exportCanvas.height = gl.canvas.height + 70;
@@ -75,24 +109,22 @@ function saveImage() {
     ctx.drawImage(gl.canvas, 0, 70);
     ctx.fillStyle = '#ffffff';
     ctx.font = '20px Arial';
-    ctx.fillText('PA1 — Kiss Surface · Variant 19 · Oleh Khomenko · TR-62mp', 20, 27);
+    ctx.fillText('PA2 — Kiss Surface · Variant 19 · Oleh Khomenko · TR-62mp', 20, 27);
     ctx.font = '15px Arial';
-    ctx.fillStyle = '#ffc25c';
-    ctx.fillText('U curves: u varies, v fixed', 20, 52);
-    ctx.fillStyle = '#55d8f0';
-    ctx.fillText('V curves: v varies, u fixed', 245, 52);
+    ctx.fillStyle = '#85c9dd';
+    ctx.fillText('Phong shading · Analytic normals · Ambient + Diffuse + Specular', 20, 52);
     exportCanvas.toBlob(function(blob) {
         if (!blob) return;
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = 'PA1_Khomenko_TR62mp.png';
+        link.download = 'PA2_Khomenko_TR62mp.png';
         link.click();
         setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
     }, 'image/png');
 }
 
-function createProgram(gl, vShader, fShader) {
+function createProgram(gl, vertexSource, fragmentSource) {
     function compile(type, source) {
         const shader = gl.createShader(type);
         gl.shaderSource(shader, source);
@@ -104,17 +136,15 @@ function createProgram(gl, vShader, fShader) {
         }
         return shader;
     }
-    const vsh = compile(gl.VERTEX_SHADER, vShader);
-    const fsh = compile(gl.FRAGMENT_SHADER, fShader);
+    const vertex = compile(gl.VERTEX_SHADER, vertexSource);
+    const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
     const program = gl.createProgram();
-    gl.attachShader(program, vsh);
-    gl.attachShader(program, fsh);
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
     gl.linkProgram(program);
-    gl.deleteShader(vsh);
-    gl.deleteShader(fsh);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        throw new Error(gl.getProgramInfoLog(program));
-    }
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
     return program;
 }
 
@@ -123,8 +153,13 @@ function init() {
         const canvas = document.getElementById('webglcanvas');
         gl = canvas.getContext('webgl', {antialias: true});
         if (!gl) throw new Error('Браузер не підтримує WebGL. Перевірте апаратне прискорення.');
-        shProgram = new ShaderProgram('Basic', createProgram(gl, vertexShaderSource, fragmentShaderSource));
-        shProgram.Use();
+        shProgram = new ShaderProgram('Phong', createProgram(gl, vertexShaderSource, fragmentShaderSource));
+        lightProgram = {prog: createProgram(gl, lightVertexSource, lightFragmentSource)};
+        lightProgram.vertex = gl.getAttribLocation(lightProgram.prog, 'vertex');
+        lightProgram.matrix = gl.getUniformLocation(lightProgram.prog, 'ModelViewProjectionMatrix');
+        lightBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, lightBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, 3*4, gl.DYNAMIC_DRAW);
         gl.enable(gl.DEPTH_TEST);
         surface = new Model('Kiss Surface');
         rebuildSurface();
@@ -133,9 +168,16 @@ function init() {
         for (const id of ['u-segments', 'v-segments']) {
             document.getElementById(id).addEventListener('input', rebuildSurface);
         }
-        for (const id of ['show-u', 'show-v']) {
+        for (const id of ['ambient', 'diffuse', 'specular']) {
             document.getElementById(id).addEventListener('change', draw);
         }
+        document.getElementById('pause-light').addEventListener('click', function() {
+            lightRunning = !lightRunning;
+            this.textContent = lightRunning ? 'Зупинити світло' : 'Продовжити рух світла';
+            this.setAttribute('aria-pressed', String(!lightRunning));
+            document.querySelector('.light-label').textContent = lightRunning ?
+                '● Джерело світла рухається по колу' : '● Рух світла зупинено';
+        });
         document.getElementById('reset-view').addEventListener('click', initialView);
         document.getElementById('front-view').addEventListener('click', function() {
             spaceball.setView(0, [0, 1, 0], [0, 0, 1]);
@@ -143,10 +185,13 @@ function init() {
         });
         document.getElementById('save-image').addEventListener('click', saveImage);
         window.addEventListener('resize', draw);
+        document.addEventListener('visibilitychange', function() { previousTime = null; });
         canvas.addEventListener('webglcontextlost', function(event) {
             event.preventDefault();
-            showError('WebGL-контекст втрачено. Оновіть сторінку, щоб відновити зображення.');
+            cancelAnimationFrame(frameRequest);
+            showError('WebGL-контекст втрачено. Оновіть сторінку для відновлення.');
         });
+        frameRequest = requestAnimationFrame(animate);
     } catch (error) {
         showError(String(error));
         console.error(error);
@@ -158,4 +203,3 @@ function showError(message) {
     error.textContent = message;
     error.hidden = false;
 }
-
